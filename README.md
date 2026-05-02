@@ -7,7 +7,7 @@ A super basic parser that natively do all_sat and supports both styles of recurs
 ### Install
 
 ```bash
-npm i blu_parser_implementation
+npm i blu_parser
 ```
 
 ### Import
@@ -15,7 +15,7 @@ npm i blu_parser_implementation
 The parser is available from the package's file
 
 ```ts
-import { Parser } from "blu_parser_implementation"
+import { Parser } from "blu_parser"
 ```
 
 ### Benchmark
@@ -29,7 +29,7 @@ npm run benchmark
 Or import the benchmark function and run it on your own ruleset:
 
 ```ts
-import { bench } from "blu_parser_implementation"
+import { bench } from "blu_parser"
 bench(
     iter,
     unparse_depth,
