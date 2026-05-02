@@ -10,32 +10,32 @@ let P = new Parser()
 .rule("integer_recurse2",      ["digit", "int"] as const,             ["int",   "number"])
 .rule("integer_single_digit",  ["digit"] as const,                    ["int",   "number"])
 .rule("float_both_side",       ["int", ".", "int"] as const,          ["float", "number"])
-// .rule("float_right_only",      [ ".", "int" ] as const,               ["float", "number"])
-// .rule("float_left_only",       [ "int", "." ] as const,               ["float", "number"])
+.rule("float_right_only",      [ ".", "int" ] as const,               ["float", "number"])
+.rule("float_left_only",       [ "int", "." ] as const,               ["float", "number"])
 
 for(let i = 0; i < 10; i++){
     console.log(P.unparse().join(""))
 }
 
-// CONFIG.VERBOSE = true
-// console.log("----")
-// const [r, log] = P.parse("12", {
-//     "tokenizer" : "char",
-//     "token_name_key" : undefined,
-//     "heuristic_filter_relaxing" : 4,
-//     "recurse_depth" : 50,
-// })
+CONFIG.VERBOSE = false
+console.log("----")
+const [r, log] = P.parse("12", {
+    "tokenizer" : "char",
+    "token_name_key" : undefined,
+    "heuristic_filter_relaxing" : 4,
+    "recurse_depth" : 50,
+})
 
-// console.log(`Found ${r.length} matches: `)
-// console.dir(r, {depth : 10})
+console.log(`Found ${r.length} matches: `)
+console.dir(r, {depth : 10})
 
-// console.log("Log Report: ")
-// if(CONFIG.VERBOSE) log.forEach(l => console.dir(l.message, {depth : 10}));
+console.log("Log Report: ")
+if(CONFIG.VERBOSE) log.forEach(l => console.dir(l.message, {depth : 10}));
 
 // test matcher
 
 import { lookup } from "./matcher"
-CONFIG.VERBOSE = true
+CONFIG.VERBOSE = false
 const res = lookup(
     "1234".split(""),
     {

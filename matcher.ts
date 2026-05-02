@@ -8,7 +8,7 @@ function match<RuleNames extends string = never>(
     
     isRuleName  : (s : string) => s is RuleNames,
 
-    // synonym controls
+    // group controls
     isGroupName? : (s : string) => boolean,
     isInGroup?   : (s : string, group_name : string) => boolean,
 

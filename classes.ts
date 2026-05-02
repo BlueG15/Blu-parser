@@ -56,7 +56,7 @@ export class Match<RuleNames extends string>{
 
 export class PartialMatch<RuleNames extends string>{
     constructor(
-        public rule_name     : RuleNames,
+        public rule_name       : RuleNames,
         public matched_anchors : ReadonlyArray<string>,
         public failed_anchor   : string,
         public failed_tokens   : string,
