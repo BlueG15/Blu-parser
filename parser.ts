@@ -87,6 +87,13 @@ export class Parser<
         return new SerializedParser(this.#rules, this.#groups)
     }
 
+    import(sp : SerializedParser){
+        this.#rules = sp.rules as RuleDefinitions
+        this.#groups = sp.groups
+        this.#static_checked = false
+        return this
+    }
+
     static deserialize(sp : SerializedParser) : Parser {
         const p = new Parser()
         p.#groups = sp.groups
@@ -552,6 +559,7 @@ export class Parser<
             if(!Number.isFinite(recurse_depth)){
                 console.warn(`Warning: recurse_depth is set to Infinite, which may cause infinite recursion. Please ensure this is intentional.`)
             }
+
             if(recurse_depth <= 0){
                 throw new Error(`recurse_depth must be a positive number.`)
             } 
@@ -600,7 +608,6 @@ export class Parser<
 
         const seq = this.#rules[rule]
         if(!seq) throw new Error(`Rule ${rule} not found`);
-
         
         const arr = [] as typeof cul
         cul.push(...seq.flatMap(s => {

@@ -68,8 +68,8 @@ Example:
 
 ```ts
 const parser = new Parser()
-    .rule("optA1", ["a"] as const, ["opt_a"])
-    .rule("optA2", [] as const,    ["opt_a"])
+    .rule("optAB2", ["a", "b"] as const, ["opt_ab"])
+    .rule("optAB1", ["b"] as const,      ["opt_ab"])
 ```
 
 ```ts
