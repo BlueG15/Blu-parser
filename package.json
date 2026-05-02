@@ -10,5 +10,8 @@
     "test": "npm run build && node ./lib/test",
     "build": "tsc",
     "benchmark": "npm run build && node ./lib/benchmark"
-  }
+  },
+  "files": [
+    "lib/**/*"
+  ]
 }

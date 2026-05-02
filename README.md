@@ -2,14 +2,12 @@
 
 A super basic parser that natively do all_sat and supports both styles of recursion
 
-<Intitial readme, replace LINK with the actual package link>
-
 ## Usage
 
 ### Install
 
 ```bash
-npm install LINK
+npm i blu_parser_implementation
 ```
 
 ### Import
@@ -17,7 +15,7 @@ npm install LINK
 The parser is available from the package's file
 
 ```ts
-import { Parser } from LINK
+import { Parser } from "blu_parser_implementation"
 ```
 
 ### Benchmark
@@ -31,7 +29,7 @@ npm run benchmark
 Or import the benchmark function and run it on your own ruleset:
 
 ```ts
-import { bench } from LINK
+import { bench } from "blu_parser_implementation"
 bench(
     iter,
     unparse_depth,
