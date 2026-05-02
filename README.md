@@ -1,6 +1,10 @@
 # Blu's parser implementation
 
-A super basic parser that natively do all_sat and supports both styles of recursion
+A lightweight basic recursive descend parser that natively do all_sat and supports both styles of recursion
+
+## Github
+
+The source code is open sourced and available on this [Repo](https://github.com/BlueG15/Blu-parser)
 
 ## Usage
 

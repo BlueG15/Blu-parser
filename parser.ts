@@ -87,7 +87,7 @@ export class Parser<
         return new SerializedParser(this.#rules, this.#groups)
     }
 
-    import(sp : SerializedParser){
+    importSerialized(sp : SerializedParser){
         this.#rules = sp.rules as RuleDefinitions
         this.#groups = sp.groups
         this.#static_checked = false
