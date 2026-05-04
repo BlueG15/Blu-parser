@@ -124,8 +124,6 @@ console.log(result) // RuleMatch[]
 console.log(log) // LogReport[]
 ```
 
-Parser *DO NOT* support postprocessing of the match result, so you need to visit the returned *RuleMatch* object and do the postprocessing yourself.
-
 The *log* returned from the *parse()* method is a *LogReport* object that contains the parsing log, which can be used for debugging and analysis purposes, also contain partial matches that can be used for incremental parsing.
 
 The *Parser Option* object passed into the *parse()* method allows you to specify parsing options such as tokenization method and token name access method, which will be explained in the next section.
@@ -189,6 +187,37 @@ heuristic_filter_relaxing? : number,
  * set to true to still keep those matches, which may be useful for debugging or if different rule with the same segmenation is wanted
  * */
 keep_duplicate_match? : boolean, 
+```
+
+### Post processing
+
+The parser supports adding a post processing function to any rule, which automatically infers the input type of the post processor function based on the rule definition and the current state of the parser.
+
+The parser supports 2 ways to add post procssor:
+
+Example 1:
+
+```ts
+const parser = new Parser()
+    .rule("a_rule", ["a"] as const, [])
+    .rule("b_rule", ["a_rule"] as const, [])
+    .addPostProcess("a_rule", (...match) => {
+        //match is inferred as [TokenMatch] since a_rule is defined as ["a"] and "a" is a literal token
+        return match.raw.length //sets a_rule's returns a number
+    })
+    .addPostProcess("b_rule", (...match) => {
+        //match is inferred as [number], 
+        // because the post processor of "a_rule" returns number and "b_rule" is defined as ["a_rule"]
+        return match.raw.length //sets b_rule's returns a number
+    })
+```
+
+or Example 2:
+
+```ts
+const parser = new Parser()
+    .rule("one", ["1"], [], () => 1) //sets one to return number 1
+    .rule("two", ["one"], [], (one) => one + 1) //sets two to return one + 1, which is 2
 ```
 
 ### Unparsing
