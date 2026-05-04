@@ -1,6 +1,8 @@
 import { Match, PartialMatch, RuleMatch, TokenMatch } from "./classes"
 import { lookup } from "./matcher"
-import { ExcludeWithError, Flatten } from "./utils"
+import { ExcludeWithError, Flatten, ObjectValue } from "./utils"
+import * as ERR from "./parser_errors"
+import { CONFIG } from "./config"
 
 type DefaultTokenizeTypes = "word" | "char"
 
@@ -54,11 +56,6 @@ type LogReport<RuleName extends string, IsError extends boolean> = {
     matches : PartialMatch<RuleName>[] | Match<RuleName>[]
 }
 
-type RawTokenType = string
-
-type OverlappedDefinitionError<NewName extends string, allNames extends string> = 
-    `Type error: Name --> ${NewName} <--" cannot be used as it overlaps with an existing rule or fragment name or group member, Existing names : ${allNames}` & Error 
-
 export class SerializedParser {
     constructor(
         public rules : Record<string, string[]>,
@@ -66,20 +63,80 @@ export class SerializedParser {
     ){}
 }
 
-// group cannot contain circular definition byu construction...hopefully
+// changes version 1.1.0 : added post processings
+
+type AnyParser = Parser<any, any, any, any, any, any, any, any, any>
+
+// helper types for post processing
+type InferPostProcessorInputSingle<
+    P extends AnyParser,
+    SymbolName extends string
+> = 
+    // rule name
+    SymbolName extends P["T_RL_NAME"] ? (
+        SymbolName extends keyof P["T_PP_DEF"] 
+        ? (
+            //has post processor
+            P["T_PP_DEF"][SymbolName] extends never ?
+            RuleMatch<SymbolName> & {ppdef : P["T_PP_DEF"], actualType : "rule match"} :
+            P["T_PP_DEF"][SymbolName] & {ppdef : P["T_PP_DEF"], actualType : "post processor return"}
+        )
+        : RuleMatch<SymbolName> & {ppdef : P["T_PP_DEF"], actualType : "rule match 2"}//no post processor, return default match type
+    ) : 
+    //group name
+    // union of memberss
+    SymbolName extends P["T_GR_NAME"] ?
+    ObjectValue<{
+        [K in P["T_GR_DEF"][SymbolName]] : InferPostProcessorInputSingle<P, K>
+    }>
+    :
+    //token
+    SymbolName extends P["T_TK_NAME"] ? TokenMatch<SymbolName> :
+    ERR.PostProcessorInputTypeCannotBeInfered<{symbol_name : SymbolName, symbol_type : "unknown"}>
+
+type InferPostProcessorInput<
+    P extends AnyParser,
+    SymbolSequence extends string[]
+> = {
+    [K in keyof SymbolSequence] : InferPostProcessorInputSingle<P, SymbolSequence[K]>
+}
+
+// there are no "ret con" names, if a rule uses "a", "a"'s type (rule/group/...) is infered as time of use
+// there cant be a use of "a" then a declare using the same name "a" later
+// this simplify type inferences
 export class Parser<
     RuleDefinitions extends Record<string, string[]> = {},
     FragmentDefinitions extends Record<string, string[]> = {},
+    GroupDefinitions extends Record<string, string> = {},
     
-    GroupNames  extends string = never,
-    TokenNames extends string = never,
+    AllSymbolNames extends string = never,
+    PostProcessors extends Record<string, any> = {}, //rule name -> post processor return type
 
+    // infered
     RuleNames extends string = keyof RuleDefinitions & string,
     FragmentNames extends string = keyof FragmentDefinitions & string,
+    GroupNames  extends string = keyof GroupDefinitions & string,
+    TokenNames extends string = Exclude<AllSymbolNames, RuleNames | FragmentNames | GroupNames>,
 >{
+    // type params
+
+    T_RL_DEF : RuleDefinitions = 0 as any
+    T_FR_DEF : FragmentDefinitions = 0 as any
+    T_GR_DEF : GroupDefinitions = 0 as any
+    T_PP_DEF : PostProcessors = 0 as any
+
+    T_SYM_NAME : AllSymbolNames = 0 as any
+    T_RL_NAME  : RuleNames = 0 as any
+    T_FR_NAME  : FragmentNames = 0 as any
+    T_GR_NAME  : GroupNames = 0 as any
+    T_TK_NAME  : TokenNames = 0 as any
+
+    // end type params
+
     #rules     : RuleDefinitions = {} as RuleDefinitions
     #fragments : FragmentDefinitions = {} as FragmentDefinitions
     #groups    : Record<string, string[]> = {}
+    #post_processors : Record<string, (...p : any) => any> = {}
 
     #static_checked = false
 
@@ -115,29 +172,78 @@ export class Parser<
 
     /** 
      * Rules are a sequence of tokens, fragments or groups,
+     * 
+     * 
      * Rules can be assigned to already existing groups
+     * 
+     * 
+     * ***NOTE*** : The infered post processing input type of this method CAN be inaccurate for groups (only groups, anything else is fine)
+     * 
+     * 
+     * since groups rule can "back refrenced" to an already defined group, what infered here can be outdated
+     * 
+     * 
+     * see @method Parser.addPostProcess for a more accurate alternative
      * */
     rule<
-        NewRuleName extends string, 
-        TokenTypeOrRuleOrFragment extends ( RawTokenType | RuleNames | FragmentNames )[],
+        RuleName extends string, 
+        SequenceType extends string[],
         IsOfGroup extends GroupNames | GroupNames[] | undefined,
+        
+        SequenceTypeStrs extends string[] = Flatten<{
+            [K in keyof SequenceType] 
+            : SequenceType[K] extends FragmentNames ? FragmentDefinitions[SequenceType[K]]
+            : SequenceType[K]
+        }>,
+        
+        PostProcessorReturn = never,
+
+        NewParserType extends AnyParser = Parser<
+            RuleDefinitions & { [K in RuleName] : SequenceTypeStrs },
+            FragmentDefinitions,
+
+            IsOfGroup extends undefined 
+            ? GroupDefinitions
+            : IsOfGroup extends GroupNames
+            ? Omit<GroupDefinitions, IsOfGroup> & { [K in IsOfGroup] : GroupDefinitions[K] | RuleName }
+            : IsOfGroup extends GroupNames[]
+            ? Omit<GroupDefinitions, IsOfGroup[number]> & { [K in IsOfGroup[number]] : GroupDefinitions[K] | RuleName }
+            : never,
+
+            RuleName | SequenceTypeStrs[number] | AllSymbolNames,
+            PostProcessors & { [K in RuleName] : PostProcessorReturn }
+        >,
+
+        PostProcessorInput extends any[] = InferPostProcessorInput<NewParserType, SequenceTypeStrs>,
     >(
-        //trick to disallow duplicate rule names
-        name : ExcludeWithError<
-            NewRuleName, RuleNames | FragmentNames | GroupNames | TokenNames,
-            OverlappedDefinitionError<NewRuleName, RuleNames | FragmentNames | GroupNames | TokenNames>, 
-            this
-        >,
+        name : RuleName &
+            ExcludeWithError<
+                RuleName, RuleNames,
+                ERR.AlreadyDefined<{symbol_name : RuleName, symbol_type : "rule", defined_type : "rule"}>
+            > &
+            ExcludeWithError<
+                RuleName, FragmentNames,
+                ERR.AlreadyDefined<{symbol_name : RuleName, symbol_type : "rule", defined_type : "fragment"}>
+            > &
+            ExcludeWithError<
+                RuleName, GroupNames,
+                ERR.AlreadyDefined<{symbol_name : RuleName, symbol_type : "rule", defined_type : "group"}>
+            > &
+            ExcludeWithError<
+                RuleName, TokenNames,
+                ERR.AlreadyDefined<{symbol_name : RuleName, symbol_type : "rule", defined_type : "token"}>
+            >,
 
-        seq  : ExcludeWithError<
-            TokenTypeOrRuleOrFragment, never[], 
-            `Type error: Rule --> ${NewRuleName} <--" cannot have an empty definition`, 
-            this
-        >,
+        seq  : SequenceType &
+            ExcludeWithError<
+                SequenceType, never[], 
+                ERR.EmptyDefinition<{symbol_name : RuleName, symbol_type : "rule"}>
+            >,
 
-        sameGroupAs : IsOfGroup = undefined as IsOfGroup
+        sameGroupAs : IsOfGroup = undefined as IsOfGroup,
+        postProcessor : (...p : PostProcessorInput) => PostProcessorReturn = undefined as any
     ){
-        (this.#rules as any)[name] = (seq as TokenTypeOrRuleOrFragment).flatMap(s => {
+        (this.#rules as any)[name] = (seq as SequenceType).flatMap(s => {
             if(s in this.#fragments) return this.#fragments[s];
             return [s]
         })
@@ -153,102 +259,123 @@ export class Parser<
             this.#groups[sameGroupAs] = Array.from(new Set([...arr, name]))
         }
 
+        if(postProcessor){
+            this.#post_processors[name] = postProcessor
+        }
+
         this.#static_checked = false
 
-        //flatten fragments
-        type NewArr = Flatten<{
-            [K in keyof TokenTypeOrRuleOrFragment] : 
-                TokenTypeOrRuleOrFragment[K] extends FragmentNames 
-                ? FragmentDefinitions[TokenTypeOrRuleOrFragment[K]]
-                : TokenTypeOrRuleOrFragment[K]
-        }>
-
-        type NewRuleDefs = {
-            [K in NewRuleName] : NewArr
-        } & RuleDefinitions
-
-        type NewTokenNames = Exclude<
-            Extract<TokenTypeOrRuleOrFragment[number], string> | TokenNames,
-            GroupNames | RuleNames | FragmentNames
-        >
-
-        return this as unknown as Parser<{
-            [K in keyof NewRuleDefs] : NewRuleDefs[K] //flatten the type
-        }, FragmentDefinitions, GroupNames, NewTokenNames>
+        return this as unknown as NewParserType
     }
 
     /**
      * Fragments are partial rules and can only be used in other rule definitions
+     * Essentially just the same as rules, just store as fragments and
+     * 1. no post processor
+     * 2. no groups
+     * 3. cannot be self referential
      */
     fragment<
-        NewFragmentName extends string,
-        TokenTypeOrOtherFragmentNameArr extends ( RawTokenType | FragmentNames | RuleNames )[],
-    >(
-        //trick to disallow duplicate rule names
-        name : ExcludeWithError<
-            NewFragmentName, RuleNames | FragmentNames | GroupNames | TokenNames,
-            OverlappedDefinitionError<NewFragmentName, RuleNames | FragmentNames | GroupNames | TokenNames>,
-            this
-        >,
+        FragmentName extends string, 
+        SequenceType extends string[],
+        
+        SequenceTypeStrs extends string[] = Flatten<{
+            [K in keyof SequenceType] 
+            : SequenceType[K] extends FragmentNames ? FragmentDefinitions[SequenceType[K]]
+            : SequenceType[K]
+        }>,
 
-        //disallow empty [] and disallow rule names (only allow fragment names and token names)
-        seq : ExcludeWithError<
-            TokenTypeOrOtherFragmentNameArr, never[], 
-            `Type error: Fragment --> ${NewFragmentName} <--" cannot have an empty definition`,
-            this
-        >   & {
-            [K in keyof TokenTypeOrOtherFragmentNameArr] : ExcludeWithError<
-                TokenTypeOrOtherFragmentNameArr[K],
-                RuleNames,
-                `Type error: Fragment --> ${NewFragmentName} <--" cannot reference rule --> ${TokenTypeOrOtherFragmentNameArr[K]} <--"`,
-                this
-            >
-        }
+        NewParserType extends AnyParser = Parser<
+            RuleDefinitions,
+            FragmentDefinitions & { [K in FragmentName] : SequenceTypeStrs },
+            GroupDefinitions,
+            FragmentName | SequenceTypeStrs[number] | AllSymbolNames,
+            PostProcessors
+        >
+    >(
+        name : FragmentName &
+            ExcludeWithError<
+                FragmentName, RuleNames,
+                ERR.AlreadyDefined<{symbol_name : FragmentName, symbol_type : "fragment", defined_type : "rule"}>
+            > &
+            ExcludeWithError<
+                FragmentName, FragmentNames,
+                ERR.AlreadyDefined<{symbol_name : FragmentName, symbol_type : "fragment", defined_type : "fragment"}>
+            > &
+            ExcludeWithError<
+                FragmentName, GroupNames,
+                ERR.AlreadyDefined<{symbol_name : FragmentName, symbol_type : "fragment", defined_type : "group"}>
+            > &
+            ExcludeWithError<
+                FragmentName, TokenNames,
+                ERR.AlreadyDefined<{symbol_name : FragmentName, symbol_type : "fragment", defined_type : "token"}>
+            >,
+
+        seq  : SequenceType &
+            ExcludeWithError<
+                SequenceType, never[], 
+                ERR.EmptyDefinition<{symbol_name : FragmentName, symbol_type : "rule"}>
+            > & (
+                FragmentName extends SequenceTypeStrs[number] 
+                ? ERR.CannotBeSelfReferential<{symbol_name : FragmentName, symbol_type : "fragment"}> 
+                : SequenceType
+            )
     ){
-        (this.#fragments as any)[name] = seq.flatMap(s => {
+        (this.#rules as any)[name] = (seq as SequenceType).flatMap(s => {
             if(s in this.#fragments) return this.#fragments[s];
-            return s;
+            return [s]
         })
 
-        //flatten fragments
-        type NewArr = Flatten<{
-            [K in keyof TokenTypeOrOtherFragmentNameArr] : 
-                TokenTypeOrOtherFragmentNameArr[K] extends FragmentNames
-                ? FragmentDefinitions[TokenTypeOrOtherFragmentNameArr[K]]
-                : TokenTypeOrOtherFragmentNameArr[K]
-        }>
+        this.#static_checked = false
 
-        type NewFragmentDefs = {
-            [K in NewFragmentName] : NewArr
-        } & FragmentDefinitions
-
-        type NewTokenNames = Exclude<
-            Extract<TokenTypeOrOtherFragmentNameArr[number], string> | TokenNames,
-            GroupNames | RuleNames | FragmentNames
-        >
-
-        return this as unknown as Parser<RuleDefinitions, {
-            [K in keyof NewFragmentDefs] : NewFragmentDefs[K] //flatten the type
-        }, GroupNames, NewTokenNames>
+        return this as unknown as NewParserType
     }
 
+    /**
+     * Group are collection of rules/groups or token names
+     * Notably cannot contain fragments
+     * 
+     * Can contain an empty definition
+     * Cannot be self refrential
+     */
     group<
         GroupName extends string,
-        GroupContent extends string[] = []
+        GroupContent extends string[] = [],
+
+        NewParserType extends AnyParser = Parser<
+            RuleDefinitions,
+            FragmentDefinitions,
+            GroupDefinitions & { [K in GroupName] : GroupContent[number] },
+            GroupName | GroupContent[number] | AllSymbolNames,
+            PostProcessors
+        >
     >(
-        name : ExcludeWithError<
-            GroupName, RuleNames | FragmentNames | GroupNames | TokenNames,
-            OverlappedDefinitionError<GroupName, RuleNames | FragmentNames | GroupNames | TokenNames>,
-            this
-        >,
-        contents? : GroupContent & {
-            [K in keyof GroupContent] : ExcludeWithError<
-                GroupContent[K],
-                FragmentNames,
-                `Type error: Group --> ${GroupName} <--" cannot reference fragment --> ${GroupContent[K]} <--"`,
-                this
-            >
-        }
+        name : GroupName &
+            ExcludeWithError<
+                GroupName, RuleNames,
+                ERR.AlreadyDefined<{symbol_name : GroupName, symbol_type : "group", defined_type : "rule"}>
+            > &
+            ExcludeWithError<
+                GroupName, FragmentNames,
+                ERR.AlreadyDefined<{symbol_name : GroupName, symbol_type : "group", defined_type : "fragment"}>
+            > &
+            ExcludeWithError<
+                GroupName, GroupNames,
+                ERR.AlreadyDefined<{symbol_name : GroupName, symbol_type : "group", defined_type : "group"}>
+            > &
+            ExcludeWithError<
+                GroupName, TokenNames,
+                ERR.AlreadyDefined<{symbol_name : GroupName, symbol_type : "group", defined_type : "token"}>
+            >,
+
+        contents? : GroupContent & (
+            GroupName extends GroupContent[number]
+            ? ERR.CannotBeSelfReferential<{symbol_name : GroupName, symbol_type : "group"}> 
+            : (FragmentNames & GroupContent[number]) extends never 
+            ? GroupContent
+            : ERR.SymbolTypeCannotBeUsedHere<{symbol_name : GroupContent[number], symbol_type : "fragment", scope_type : "group"}>
+        )
+            
     ){
         let flatContent = (contents || []) as string[]
 
@@ -260,16 +387,30 @@ export class Parser<
         this.#groups[name] = Array.from(new Set([...(this.#groups[name] || []), ...flatContent]))
         this.#static_checked = false
 
-        type NewGroupDefs = GroupNames | GroupName
-        type NewTokenNames = Exclude<
-            GroupContent[number] | TokenNames,
-            GroupNames | RuleNames | FragmentNames
-        >
-
-        return this as unknown as Parser<RuleDefinitions, FragmentDefinitions, NewGroupDefs, NewTokenNames>
+        return this as unknown as NewParserType
     }
 
+    addPostProcess<
+        RuleName extends RuleNames, 
+        PostProcessorReturn,
 
+        NewParserType extends AnyParser = Parser<
+            RuleDefinitions,
+            FragmentDefinitions,
+            GroupDefinitions,
+            AllSymbolNames,
+            Omit<PostProcessors, RuleName> & { [K in RuleName] : PostProcessorReturn }
+        >,
+
+        SequenceType extends string[] = RuleDefinitions[RuleName],
+        PostProcessorInput extends any[] = InferPostProcessorInput<this, SequenceType>,
+    >(
+        name : RuleName,
+        postProcessor : (...p : PostProcessorInput) => PostProcessorReturn
+    ){
+        this.#post_processors[name] = postProcessor
+        return this as unknown as NewParserType
+    }
 
     isRuleName(s : RuleNames) : true;
     isRuleName(s : GroupNames) : false;
@@ -418,7 +559,7 @@ export class Parser<
                 })
 
                 const matchedTopRule = match.matched_rule
-                let currentPath : (TokenMatch<RuleNames> | RuleMatch<RuleNames>)[][] = []
+                let currentPath : (TokenMatch | RuleMatch<RuleNames>)[][] = []
 
                 path_iter: for(const r of match.parsed_result.path){
 
@@ -533,11 +674,26 @@ export class Parser<
         return res
     }
 
-    parse(
+    parse<
+        TopRulesTypeArr extends (RuleNames | GroupNames)[] = [RuleNames],
+        TopRuleType extends RuleNames = Flatten<{
+            [K in keyof TopRulesTypeArr] :
+                TopRulesTypeArr[K] extends RuleNames ? TopRulesTypeArr[K] :
+                TopRulesTypeArr[K] extends GroupNames ? (
+                    [GroupDefinitions[TopRulesTypeArr[K]][number] & RuleNames]
+                ) : []
+        }>[number]
+    >(
         input : string | string[],
         parse_option : ParseOption<string | undefined>,
-        starting_rules? : RuleNames[]
-    ) : [RuleMatch<RuleNames>[], LogReport<RuleNames, true | false>[]] | never {
+        starting_rules? : TopRulesTypeArr
+    ) : [
+            (
+                TopRuleType extends keyof PostProcessors ? PostProcessors[TopRuleType] : RuleMatch<TopRuleType>
+            )[],
+            LogReport<RuleNames, true | false>[]
+        ]
+    {
         if(!this.#static_checked) this.staticCheckRuleSet();
 
         let recurse_depth = parse_option.recurse_depth ?? 10
@@ -568,16 +724,49 @@ export class Parser<
         const log : (LogReport<RuleNames, true> | LogReport<RuleNames, false>)[] = []
 
         try{
+            const M = this.recursive_descend(tokenArr, log, parse_option, starting_rules) as RuleMatch<RuleNames>[]
+            const P = this.postProcess<TopRuleType>(M)
             return [
-                this.recursive_descend(tokenArr, log, parse_option, starting_rules) as RuleMatch<RuleNames>[],
+                P as any,
                 log
             ]
         } catch(e) {
             return [
-                [],
+                [] as any,
                 log
             ]
         }
+    }
+
+    protected postProcess<TopRuleType extends RuleNames>(
+        matches : RuleMatch<RuleNames>[],
+    ) : (TopRuleType extends keyof PostProcessors ? PostProcessors[TopRuleType] : RuleMatch<TopRuleType>)[] 
+    {
+        if(CONFIG.VERBOSE){
+            console.log("Post processing matches...")
+        }
+
+        if(matches.length === 0) return [] as any;
+
+        const res : any[] = []
+        for(const m of matches){
+            if(CONFIG.VERBOSE){
+                console.log(`Post processing match with rule ${m.rule_name} and matched elements :`, m.matched)
+            }
+
+            const finalProcessor = this.#post_processors[m.rule_name]
+            if(finalProcessor === undefined) {
+                res.push(m);
+                continue;
+            }
+            const params : any[] = []
+            for(const child of m.matched){
+                if(child instanceof TokenMatch) params.push(child);
+                else params.push(this.postProcess([child])[0])
+            }
+            res.push(finalProcessor(...params));
+        }
+        return res
     }
 
     private choose<T>(arr : T[]) : T {
@@ -621,4 +810,3 @@ export class Parser<
         return cul
     }
 }
-

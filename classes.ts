@@ -1,14 +1,14 @@
 // export abstract class ResolvedMatch<RuleNames extends string>{}
 
-export class TokenMatch<RuleNames extends string>{
+export class TokenMatch<TName extends string = string>{
     constructor(
-        public token : string
+        public token : TName
     ){}
 }
 
 export class RuleMatch<RuleNames extends string>{
     constructor(
-        public matched : (RuleMatch<RuleNames> | TokenMatch<RuleNames>)[],
+        public matched : (RuleMatch<RuleNames> | TokenMatch)[],
         public rule_name : RuleNames
     ){}
 }
