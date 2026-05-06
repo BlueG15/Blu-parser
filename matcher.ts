@@ -1,17 +1,17 @@
 import { CONFIG } from "./config";
 import { Match, PartialMatch } from "./classes";
 
+type Checker = {
+    isRuleName   : (s : string) => boolean,
+    isGroupName? : (s : string) => boolean,
+    isInGroup?   : (s : string, group_name : string) => boolean,
+}
+
 function match<RuleNames extends string = never>(
     rule_name         : RuleNames,
     input_sequence    : ReadonlyArray<string>, 
     expected_sequence : ReadonlyArray<string>, 
-    
-    isRuleName  : (s : string) => s is RuleNames,
-
-    // group controls
-    isGroupName? : (s : string) => boolean,
-    isInGroup?   : (s : string, group_name : string) => boolean,
-
+    checker           : Checker,
     early_stop_anchor_count = 0, //returns early if matched anchors strictly below this count,
 ){
     if(CONFIG.VERBOSE) 
@@ -19,7 +19,7 @@ function match<RuleNames extends string = never>(
             `Attempting to match input sequence "${input_sequence.join(" ")}" with expected sequence "${expected_sequence.join(" ")}" for action(s) ${rule_name}`
         );
 
-    const anchors = expected_sequence.filter(t => !isRuleName(t))
+    const anchors = expected_sequence.filter(t => !checker.isRuleName(t))
 
     if(!anchors.length){
         if(CONFIG.VERBOSE) console.log(`Action ${rule_name} with pattern ${expected_sequence.join(", ")} has no anchors, skipping.`);
@@ -41,15 +41,15 @@ function match<RuleNames extends string = never>(
             }
             // Try synonyms
             else if(
-                isGroupName && isInGroup && 
-                isGroupName(anchor) && isInGroup(input_sequence[j], anchor)
+                checker.isGroupName && checker.isInGroup && 
+                checker.isGroupName(anchor) && checker.isInGroup(input_sequence[j], anchor)
             ) {
                 matches.push(j)
             }
         }
         
         // Check if this is a group anchor
-        const isGroup = isGroupName?.(anchor)
+        const isGroup = checker.isGroupName?.(anchor)
         
         if(matches.length === 0){
             if(isGroup) {
@@ -109,9 +109,17 @@ function match<RuleNames extends string = never>(
 
     travel(0)
 
-    if(CONFIG.VERBOSE) 
-        //logs isFlexible
-        console.log(isFlexibleAnchor)
+    if(CONFIG.VERBOSE) {
+        console.log(`Total valid anchor paths found: ${validPaths.length}`)
+        validPaths.forEach((p, idx) => {
+            const anchor_positions = p.map((pos, i) => `${anchors[hardAnchorIndices[i]]} at input index ${pos}`)
+            console.log(`  Path ${idx + 1}: ${anchor_positions.join(", ")}`)
+        })
+    }
+
+    // if(CONFIG.VERBOSE) 
+    //     //logs isFlexible
+    //     console.log(isFlexibleAnchor)
 
     // Optimize: reconstruct matches more efficiently
     return validPaths.map(hardAnchorPath => {
@@ -236,13 +244,11 @@ function match<RuleNames extends string = never>(
 export function lookup<
     RuleNames extends string = never
 >(
+    checker : Checker,
+    rule_set : Record<RuleNames, string[]>,
     token_name_sequence : string[], 
-    rules : Record<RuleNames, string[]>,
     heuristic_filter_cutoff = 4,
-
-    // synonym controls
-    groups : Record<string, string[]> = {},
-    keep_duplicate_match = false,
+    keep_duplicate_match = false, 
 ){
     const seen = new Map<string, Match<RuleNames>>()
     let best_matches : Match<RuleNames>[] = []
@@ -252,28 +258,13 @@ export function lookup<
     let best_failed_patterns : PartialMatch<RuleNames>[] = []
     let best_failed_anchor_count = 0
 
-    function isRuleName(s : any) : s is RuleNames {
-        return s in rules
-    }
-
-    function isGroupName(s : string) : boolean {
-        return s in groups
-    }
-
-    //only called after isGroupName check, so we can be sure group_name exists in groups
-    function isInGroup(s : string, group_name : string) : boolean {
-        return groups[group_name]!.includes(s)
-    }
-
-    for(const rule_name in rules){
-        const seq = rules[rule_name]
-        const matches = match(
+    for(const rule_name in rule_set){
+        const seq = rule_set[rule_name]
+        const matches = match<RuleNames>(
             rule_name, 
             token_name_sequence, 
             seq, 
-            isRuleName,
-            isGroupName,
-            isInGroup,
+            checker,
             best_anchor_count - heuristic_filter_cutoff,
         )
 

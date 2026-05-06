@@ -1,4 +1,4 @@
-import { Match, PartialMatch, RuleMatch, TokenMatch } from "./classes"
+import { ClusterMatch, Match, PartialMatch, RuleMatch, TokenMatch } from "./classes"
 import { lookup } from "./matcher"
 import { ExcludeWithError, Flatten, ObjectValue } from "./utils"
 import * as ERR from "./parser_errors"
@@ -65,7 +65,7 @@ export class SerializedParser {
 
 // changes version 1.1.0 : added post processings
 
-type AnyParser = Parser<any, any, any, any, any, any, any, any, any>
+export type AnyParser = Parser<any, any, any, any, any, any, any, any>
 
 // helper types for post processing
 type InferPostProcessorInputSingle<
@@ -78,20 +78,23 @@ type InferPostProcessorInputSingle<
         ? (
             //has post processor
             P["T_PP_DEF"][SymbolName] extends never ?
-            RuleMatch<SymbolName> & {ppdef : P["T_PP_DEF"], actualType : "rule match"} :
-            P["T_PP_DEF"][SymbolName] & {ppdef : P["T_PP_DEF"], actualType : "post processor return"}
+            RuleMatch :
+            P["T_PP_DEF"][SymbolName]
         )
-        : RuleMatch<SymbolName> & {ppdef : P["T_PP_DEF"], actualType : "rule match 2"}//no post processor, return default match type
+        : RuleMatch //no post processor, return default match type
     ) : 
     //group name
     // union of memberss
+    SymbolName extends "T"  ? TokenMatch   : //early terminate
+    SymbolName extends "T+" ? ClusterMatch : //early terminate
+
     SymbolName extends P["T_GR_NAME"] ?
     ObjectValue<{
         [K in P["T_GR_DEF"][SymbolName]] : InferPostProcessorInputSingle<P, K>
     }>
     :
     //token
-    SymbolName extends P["T_TK_NAME"] ? TokenMatch<SymbolName> :
+    SymbolName extends P["T_TK_NAME"] ? TokenMatch :
     ERR.PostProcessorInputTypeCannotBeInfered<{symbol_name : SymbolName, symbol_type : "unknown"}>
 
 type InferPostProcessorInput<
@@ -107,16 +110,18 @@ type InferPostProcessorInput<
 export class Parser<
     RuleDefinitions extends Record<string, string[]> = {},
     FragmentDefinitions extends Record<string, string[]> = {},
-    GroupDefinitions extends Record<string, string> = {},
+    GroupDefinitions extends Record<string, string> = {
+        "T" :  never, //default group that captures any token
+        "T+" : never, //default group that captures at least 1 token
+    },
     
-    AllSymbolNames extends string = never,
     PostProcessors extends Record<string, any> = {}, //rule name -> post processor return type
 
     // infered
-    RuleNames extends string = keyof RuleDefinitions & string,
     FragmentNames extends string = keyof FragmentDefinitions & string,
     GroupNames  extends string = keyof GroupDefinitions & string,
-    TokenNames extends string = Exclude<AllSymbolNames, RuleNames | FragmentNames | GroupNames>,
+    RuleNames extends string = keyof RuleDefinitions & string,
+    TokenNames extends string = GroupDefinitions["T"]
 >{
     // type params
 
@@ -125,7 +130,6 @@ export class Parser<
     T_GR_DEF : GroupDefinitions = 0 as any
     T_PP_DEF : PostProcessors = 0 as any
 
-    T_SYM_NAME : AllSymbolNames = 0 as any
     T_RL_NAME  : RuleNames = 0 as any
     T_FR_NAME  : FragmentNames = 0 as any
     T_GR_NAME  : GroupNames = 0 as any
@@ -188,7 +192,9 @@ export class Parser<
     rule<
         RuleName extends string, 
         SequenceType extends string[],
-        IsOfGroup extends GroupNames | GroupNames[] | undefined,
+        IsOfGroup extends GroupNames[] | undefined = undefined,
+
+        IsOfGroupInfered extends GroupNames[] = IsOfGroup extends GroupNames[] ? IsOfGroup : [],
         
         SequenceTypeStrs extends string[] = Flatten<{
             [K in keyof SequenceType] 
@@ -202,15 +208,20 @@ export class Parser<
             RuleDefinitions & { [K in RuleName] : SequenceTypeStrs },
             FragmentDefinitions,
 
-            IsOfGroup extends undefined 
-            ? GroupDefinitions
-            : IsOfGroup extends GroupNames
-            ? Omit<GroupDefinitions, IsOfGroup> & { [K in IsOfGroup] : GroupDefinitions[K] | RuleName }
-            : IsOfGroup extends GroupNames[]
-            ? Omit<GroupDefinitions, IsOfGroup[number]> & { [K in IsOfGroup[number]] : GroupDefinitions[K] | RuleName }
-            : never,
+            Omit<
+                GroupDefinitions, 
+                IsOfGroupInfered[number] |
+                "T"
+            > & { 
+                [K in IsOfGroupInfered[number]] : GroupDefinitions[K] | RuleName
+            } & {
+                // add to T
+                "T" : Exclude<
+                    GroupDefinitions["T"] | SequenceTypeStrs[number],
+                    RuleName | FragmentNames | GroupNames | RuleNames
+                >
+            },
 
-            RuleName | SequenceTypeStrs[number] | AllSymbolNames,
             PostProcessors & { [K in RuleName] : PostProcessorReturn }
         >,
 
@@ -288,8 +299,13 @@ export class Parser<
         NewParserType extends AnyParser = Parser<
             RuleDefinitions,
             FragmentDefinitions & { [K in FragmentName] : SequenceTypeStrs },
-            GroupDefinitions,
-            FragmentName | SequenceTypeStrs[number] | AllSymbolNames,
+            (Omit<GroupDefinitions, "T"> & {
+                // add to T
+                "T" : Exclude<
+                    GroupDefinitions["T"] | SequenceTypeStrs[number],
+                    FragmentName | FragmentNames | GroupNames | RuleNames
+                >
+            }),
             PostProcessors
         >
     >(
@@ -321,7 +337,7 @@ export class Parser<
                 : SequenceType
             )
     ){
-        (this.#rules as any)[name] = (seq as SequenceType).flatMap(s => {
+        (this.#fragments as any)[name] = (seq as SequenceType).flatMap(s => {
             if(s in this.#fragments) return this.#fragments[s];
             return [s]
         })
@@ -345,8 +361,14 @@ export class Parser<
         NewParserType extends AnyParser = Parser<
             RuleDefinitions,
             FragmentDefinitions,
-            GroupDefinitions & { [K in GroupName] : GroupContent[number] },
-            GroupName | GroupContent[number] | AllSymbolNames,
+            Omit<GroupDefinitions, "T"> 
+            & { [K in GroupName] : GroupContent[number] } 
+            & { 
+                "T" : Exclude<
+                    GroupDefinitions["T"] | GroupContent[number], 
+                    GroupName | FragmentNames | GroupNames | RuleNames
+                >
+            },
             PostProcessors
         >
     >(
@@ -368,14 +390,16 @@ export class Parser<
                 ERR.AlreadyDefined<{symbol_name : GroupName, symbol_type : "group", defined_type : "token"}>
             >,
 
-        contents? : GroupContent & (
-            GroupName extends GroupContent[number]
-            ? ERR.CannotBeSelfReferential<{symbol_name : GroupName, symbol_type : "group"}> 
-            : (FragmentNames & GroupContent[number]) extends never 
-            ? GroupContent
-            : ERR.SymbolTypeCannotBeUsedHere<{symbol_name : GroupContent[number], symbol_type : "fragment", scope_type : "group"}>
-        )
-            
+        contents? : {
+            [K in keyof GroupContent] 
+                : GroupContent[K] extends GroupName 
+                ? ERR.CannotBeSelfReferential<{symbol_name : GroupName, symbol_type : "group"}> 
+                : GroupContent[K] extends FragmentNames
+                ? ERR.SymbolTypeCannotBeUsedHere<{symbol_name : GroupContent[K], symbol_type : "fragment", scope_type : "group"}>
+                : GroupContent[K] extends "T" | "T+"
+                ? ERR.SymbolTypeCannotBeUsedHere<{symbol_name : GroupContent[K], symbol_type : "group", scope_type : "group"}>
+                : GroupContent[K]
+        }
     ){
         let flatContent = (contents || []) as string[]
 
@@ -398,7 +422,6 @@ export class Parser<
             RuleDefinitions,
             FragmentDefinitions,
             GroupDefinitions,
-            AllSymbolNames,
             Omit<PostProcessors, RuleName> & { [K in RuleName] : PostProcessorReturn }
         >,
 
@@ -421,7 +444,7 @@ export class Parser<
     }
 
     isGroupName(s : string) : s is GroupNames {
-        return s in this.#groups
+        return s in this.#groups || s === "T+" || s === "T";
     }
 
     isFragmentName(s : string) : s is FragmentNames {
@@ -433,7 +456,8 @@ export class Parser<
     }
 
     isInGroup(s : string, group_name : string) : boolean {
-        return this.#groups[group_name]?.includes(s)
+        if(group_name === "T") return true;
+        return this.#groups[group_name]?.includes(s);
     }
 
     /**
@@ -476,7 +500,7 @@ export class Parser<
         this.#static_checked = true
     }
 
-    protected getRuleSet(
+    getRuleSet(
         rules? : (RuleNames | GroupNames)[]
     ) : Record<string, string[]> {
 
@@ -522,11 +546,11 @@ export class Parser<
         }
 
         const [m, p] = lookup<RuleNames>(
-            input,
+            this,
             this.getRuleSet(use_rule),
+            input,
             option.heuristic_filter_relaxing,
-            this.#groups,
-            option.keep_duplicate_match
+            option.keep_duplicate_match,
         )
 
         //each match is a path
@@ -559,7 +583,7 @@ export class Parser<
                 })
 
                 const matchedTopRule = match.matched_rule
-                let currentPath : (TokenMatch | RuleMatch<RuleNames>)[][] = []
+                let currentPath : (TokenMatch | RuleMatch<RuleNames> | ClusterMatch)[][] = []
 
                 path_iter: for(const r of match.parsed_result.path){
 
@@ -583,6 +607,7 @@ export class Parser<
                             currentPath = [[new TokenMatch(r.value)]]
                         }
                         else currentPath.forEach(path => path.push(new TokenMatch(r.value)));
+
                     } else if(r.type === "segment"){
                         //quick check
 
@@ -604,6 +629,24 @@ export class Parser<
                                 currentPath = [[new TokenMatch(r.value[0])]]
                             }
                             else currentPath.forEach(path => path.push(new TokenMatch(r.value[0])));
+                            continue path_iter
+                        }
+
+                        if(
+                            r.value.length >= 1 &&
+                            r.expected_rule_or_group === "T+"
+                        ){
+                            log.push({
+                                isError : false,
+                                message : `Segment with tokens "${r.value.join(" ")}" matches group T+ directly, skipping recursion`,
+                                matches : [match],
+                                start_sequence : input
+                            })
+                            if(!currentPath.length){
+                                //first explored
+                                currentPath = [[new ClusterMatch(r.value)]]
+                            }
+                            else currentPath.forEach(path => path.push(new ClusterMatch(r.value)));
                             continue path_iter
                         }
 
@@ -761,8 +804,8 @@ export class Parser<
             }
             const params : any[] = []
             for(const child of m.matched){
-                if(child instanceof TokenMatch) params.push(child);
-                else params.push(this.postProcess([child])[0])
+                if(child instanceof RuleMatch) params.push(this.postProcess([child])[0]);
+                else params.push(child);
             }
             res.push(finalProcessor(...params));
         }
@@ -771,6 +814,19 @@ export class Parser<
 
     private choose<T>(arr : T[]) : T {
         return arr[Math.floor(Math.random() * arr.length)]
+    }
+
+    private randStr(len : number = this.randInt(10, 20)) : string {
+        const chars = "abcdefghijklmnopqrstuvwxyz"
+        let res = ""
+        for(let i = 0; i < len; i++){
+            res += chars[Math.floor(Math.random() * chars.length)]
+        }
+        return res
+    }
+
+    private randInt(min : number, max : number) : number {
+        return Math.floor(Math.random() * (max - min + 1)) + min
     }
 
     /**
@@ -784,9 +840,17 @@ export class Parser<
     ) : string[] {
         if(depth > maxDepth) return cul;
 
+        // default cases
         if(rule === undefined)
             rule = this.choose(Object.keys(this.#rules) as RuleNames[])
         else if(this.isGroupName(rule)){
+            if(rule === "T") return [...cul, this.randStr(this.randInt(1, 5))];
+            if(rule === "T+"){
+                const times = this.randInt(1, 5)
+                const tokens = Array.from({length : times}, () => this.randStr(this.randInt(1, 5)))
+                return [...cul, ...tokens]
+            }
+
             const group_members = this.#groups[rule]!
             const random_chosen_member = this.choose(group_members)
             if(this.isRuleName(random_chosen_member) || this.isGroupName(random_chosen_member)){
@@ -794,6 +858,8 @@ export class Parser<
             }
             return [...cul, random_chosen_member]
         }
+
+        // recurse further
 
         const seq = this.#rules[rule]
         if(!seq) throw new Error(`Rule ${rule} not found`);

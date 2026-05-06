@@ -1,8 +1,21 @@
 import { CONFIG } from "./config"
-import { Parser } from "./parser"
+import { AnyParser, ParseOption, Parser } from "./parser"
+
+class VarDecl {
+    constructor(
+        public readonly name : string,
+        public readonly value : number,
+        public readonly isImmutable : boolean = false
+    ){}
+}
 
 let P = new Parser()
 .group("num")
+
+.group("decls", ["var", "const", "let"] as const)
+
+.rule("var_decl_stmt", ["decls", "T+", "=", "num"] as const)
+
 .rule("1", ["one"] as const,    ["num"] as const, () => 1)
 .rule("2", ["two"] as const,    ["num"] as const, () => 2)
 .rule("3", ["three"] as const,  ["num"] as const, () => 3)
@@ -33,13 +46,44 @@ let P = new Parser()
 .addPostProcess("x100_2",  num => typeof num === "number" ? num * 100 : NaN)
 .addPostProcess("x1000_2", num => typeof num === "number" ? num * 1000 : NaN)
 
+.addPostProcess("var_decl_stmt", (decl, varname, _, value) => {
+    if(
+        typeof value === "number"
+    ){
+        return varname.tokens.map(name => new VarDecl(
+            name, 
+            value, 
+            decl.token === "const"
+        ))
+    }
+
+    else return {
+        error : "Invalid var decl statement",
+        decl, varname, value
+    } as const
+})
 
 for(let i = 0; i < 10; i++){
-    console.log(P.unparse().join(" "))
+    console.log(P.unparse(10, "var_decl_stmt").join(" "))
 }
 
 CONFIG.VERBOSE = false
 console.log("----")
+
+const Option : ParseOption<undefined> = {
+    "tokenizer" : "word",
+    "token_name_key" : undefined,
+    "heuristic_filter_relaxing" : 0,
+    "recurse_depth" : 50,
+}
+
+function logParseResult(r : any[], log : {message : string}[]){
+    console.log(`Found ${r.length} matches: `)
+    console.dir(r, {depth : 10})
+
+    console.log("Log Report: ")
+    if(CONFIG.VERBOSE) log.forEach(l => console.dir(l.message, {depth : 10}));
+}
 
 // this demonstrates the ambiguous handling of the parser
 // theres 2 paths here 
@@ -47,18 +91,12 @@ console.log("----")
 // and (twelve) hundred (four ty three) -> 12 * 100 + (4 * 10 + 3)
 // both are valid according to the rules defined, and the parser will return both of them as matches, 
 // with the correct post processed values (12403 and 1243 respectively)
-const [r, log] = P.parse("twelve hundred four ty three", {
-    "tokenizer" : "word",
-    "token_name_key" : undefined,
-    "heuristic_filter_relaxing" : 0,
-    "recurse_depth" : 50,
-}, ["num"] as const)
+const [r, log] = P.parse("twelve hundred four ty three", Option, ["num"] as const)
+logParseResult(r, log)
 
-console.log(`Found ${r.length} matches: `)
-console.dir(r, {depth : 10})
-
-console.log("Log Report: ")
-if(CONFIG.VERBOSE) log.forEach(l => console.dir(l.message, {depth : 10}));
+// demonstrate the use of "T*" group
+const [r2, log2] = P.parse("const x1 x2 = eleven hundred", Option, ["var_decl_stmt"] as const)
+logParseResult(r2, log2)
 
 // test matcher
 

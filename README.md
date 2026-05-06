@@ -60,6 +60,8 @@ const parser = new Parser()
 + Fragments are reusable sequences of *literal tokens* or *group names* that can be used in rules but do not participate in matches
 + Groups (*NEW*) are sets of strings that matches any one of the *literal tokens* and/or *rule names* names in the set
 
+> Group **CAN** contain other groups except the special default ones
+
 Parser **DO NOT SUPPORT** regex and lookahead/lookbehind assertions, however it does supports the following features:
 
 + Left and right recursion
@@ -91,6 +93,24 @@ const parser = new Parser()
 This is a design choice to keep the parser simple and straightforward, and also to allow for more flexibility in the grammar design. This hopefully supports all typical grammars.
 
 Note that *as const* is required to let the parser infer the literal token type, which is used for rule checking purposes. Missing *as const* make ts infers the array as string[], which is not helpful and will cause type errors in rule construction.
+
+### Special groups
+
+There are 2 default groups that can be used without declaration, which are **T** and **T**
+
++ **T** matches any single token
+
+```ts
+const parser = new Parser()
+    .rule("assign_stmt", ["T", "=", "T"] as const)
+```
+
++ **T+** matches any sequence of tokens with length of 1 or more, ungreedy until the next "anchor" is macthed
+
+```ts
+const parser = new Parser()
+    .rule("assign_many", ["T+", "=", "T"] as const)
+```
 
 ### Type restriction
 

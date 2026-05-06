@@ -1,4 +1,9 @@
 // export abstract class ResolvedMatch<RuleNames extends string>{}
+export class ClusterMatch {
+    constructor(
+        public tokens : string[],
+    ){}
+}
 
 export class TokenMatch<TName extends string = string>{
     constructor(
@@ -6,9 +11,9 @@ export class TokenMatch<TName extends string = string>{
     ){}
 }
 
-export class RuleMatch<RuleNames extends string>{
+export class RuleMatch<RuleNames extends string = string>{
     constructor(
-        public matched : (RuleMatch<RuleNames> | TokenMatch)[],
+        public matched : (RuleMatch<RuleNames> | TokenMatch | ClusterMatch)[],
         public rule_name : RuleNames
     ){}
 }
