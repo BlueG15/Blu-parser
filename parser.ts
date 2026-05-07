@@ -4,6 +4,8 @@ import { ExcludeWithError, Flatten, ObjectValue, Writable } from "./utils"
 import * as ERR from "./parser_errors"
 import { CONFIG } from "./config"
 
+class RecursiveError extends Error {}
+
 type DefaultTokenizeTypes = "word" | "char"
 
 export type ParseOption<Token_name_key extends string | undefined | never> = {
@@ -566,7 +568,7 @@ export class Parser<
                 matches : [],
                 start_sequence : input
             })
-            throw log
+            throw new RecursiveError()
         }
 
         const [m, p] = lookup<RuleNames>(
@@ -585,7 +587,7 @@ export class Parser<
                 matches : p,
                 start_sequence : input
             })
-            throw log
+            throw new RecursiveError()
         }
 
         log.push({
@@ -609,36 +611,45 @@ export class Parser<
                 const matchedTopRule = match.matched_rule
                 let currentPath : (TokenMatch | RuleMatch<RuleNames> | ClusterMatch)[][] = []
 
+                if(CONFIG.VERBOSE) console.log(`[MATCH START] Processing match: rule="${matchedTopRule}", path length=${match.parsed_result.path.length}`);
+
                 path_iter: for(const r of match.parsed_result.path){
 
                     log.push({
                         isError : false,
                         message : `Exploring path element ${JSON.stringify(r.value, null, 0)} of matched rule ${matchedTopRule}`,
-                        matches : [match],
+                        matches : [],
                         start_sequence : input
                     })
 
+                    if(CONFIG.VERBOSE) console.log(`  [BEFORE ELEMENT] type="${r.type}", value="${r.value}", currentPath.length=${currentPath.length}`);
 
                     if(r.type === "anchor") {
                         log.push({
                             isError : false,
                             message : `Path element is an anchor with value "${r.value}" and anchor name "${r.anchor_name}"`,
-                            matches : [match],
+                            matches : [],
                             start_sequence : input
                         })
                         if(!currentPath.length){
                             //first explored
                             currentPath = [[new TokenMatch(r.value)]]
+                            if(CONFIG.VERBOSE) console.log(`    [ANCHOR FIRST] Created first anchor: "${r.value}", currentPath.length=1`);
                         }
-                        else currentPath.forEach(path => path.push(new TokenMatch(r.value)));
+                        else {
+                            currentPath.forEach(path => path.push(new TokenMatch(r.value)));
+                            if(CONFIG.VERBOSE) console.log(`    [ANCHOR APPEND] Appended anchor: "${r.value}" to ${currentPath.length} paths`);
+                        }
 
                     } else if(r.type === "segment"){
+                        if(CONFIG.VERBOSE) console.log(`  [SEGMENT DEBUG] r.value.length=${r.value.length}, r.value=${JSON.stringify(r.value)}, expected_rule_or_group="${r.expected_rule_or_group}"`);
                         //quick check
 
                         // NOTE : without this, tail recurson rule stop working somehow
                         if(
                             r.value.length === 1 && 
-                            this.isGroupName(r.expected_rule_or_group) &&
+                            r.expected_rule_or_group in this.#groups &&
+                            // this.isGroupName(r.expected_rule_or_group) &&
                             this.isTokenName(r.value[0]) &&
                             this.#groups[r.expected_rule_or_group].includes(r.value[0])
                         ){
@@ -651,8 +662,12 @@ export class Parser<
                             if(!currentPath.length){
                                 //first explored
                                 currentPath = [[new TokenMatch(r.value[0])]]
+                                if(CONFIG.VERBOSE) console.log(`    [QUICK GROUP FIRST] Created first token match: "${r.value[0]}", currentPath.length=1`);
                             }
-                            else currentPath.forEach(path => path.push(new TokenMatch(r.value[0])));
+                            else {
+                                currentPath.forEach(path => path.push(new TokenMatch(r.value[0])));
+                                if(CONFIG.VERBOSE) console.log(`    [QUICK GROUP APPEND] Appended token: "${r.value[0]}" to ${currentPath.length} paths`);
+                            }
                             continue path_iter
                         }
 
@@ -662,17 +677,70 @@ export class Parser<
                         ){
                             log.push({
                                 isError : false,
-                                message : `Segment with tokens "${r.value.join(" ")}" matches group T+ directly, skipping recursion`,
-                                matches : [match],
+                                message : `Segment with tokens "${r.value.join(" ")}" matches wild card group T+ directly, skipping recursion`,
+                                matches : [],
                                 start_sequence : input
                             })
                             if(!currentPath.length){
                                 //first explored
                                 currentPath = [[new ClusterMatch(r.value)]]
+                                if(CONFIG.VERBOSE) console.log(`    [QUICK T+ FIRST] Created first cluster match: "${r.value.join(" ")}", currentPath.length=1`);
                             }
-                            else currentPath.forEach(path => path.push(new ClusterMatch(r.value)));
+                            else {
+                                currentPath.forEach(path => path.push(new ClusterMatch(r.value)));
+                                if(CONFIG.VERBOSE) console.log(`    [QUICK T+ APPEND] Appended cluster: "${r.value.join(" ")}" to ${currentPath.length} paths`);
+                            }
                             continue path_iter
+                        } else if(r.expected_rule_or_group === "T+"){
+                            //T+ anyway
+                            log.push({
+                                isError : true,
+                                message : `Segment with value "${r.value.join(" ")}" does not match wild card group T+ since it has no tokens, this path is invalid`,
+                                matches : [],
+                                start_sequence : input
+                            })
+                            currentPath = [] //reset current path since this path is invalid
+                            break path_iter
                         }
+
+                        if(
+                            r.value.length === 1 &&
+                            r.expected_rule_or_group === "T"
+                        ){
+                            log.push({
+                                isError : false,
+                                message : `Segment with single token "${r.value[0]}" matches wild card group directly, skipping recursion`,
+                                matches : [],
+                                start_sequence : input
+                            })
+                            if(!currentPath.length){
+                                //first explored
+                                currentPath = [[new TokenMatch(r.value[0])]]
+                                if(CONFIG.VERBOSE) console.log(`    [QUICK T FIRST] Created first token match: "${r.value[0]}", currentPath.length=1`);
+                            }
+                            else {
+                                currentPath.forEach(path => path.push(new TokenMatch(r.value[0])));
+                                if(CONFIG.VERBOSE) console.log(`    [QUICK T APPEND] Appended token: "${r.value[0]}" to ${currentPath.length} paths`);
+                            }
+                            continue path_iter
+                        } else if(r.expected_rule_or_group === "T"){
+                            //T anyway
+                            log.push({
+                                isError : true,
+                                message : `Segment with value "${r.value.join(" ")}" does not match wild card group T since it has more than 1 token, this path is invalid`,
+                                matches : [],
+                                start_sequence : input
+                            })
+                            currentPath = [] //reset current path since this path is invalid
+                            break path_iter
+                        }
+
+                        log.push({
+                            isError : false,
+                            message : `Path element is a non quick handle-able segment with value "${r.value.join(" ")}" and expected rule/group "${r.expected_rule_or_group}"`,
+                            matches : [],
+                            start_sequence : input
+                        })
 
                         //recurse 
                         try {
@@ -683,18 +751,32 @@ export class Parser<
                                 log.push({
                                     isError : false,
                                     message : `Recursing into expected rule/group ${r.expected_rule_or_group} for segment [${r.value.join(" ")}]`,
-                                    matches : [match],
+                                    matches : [],
                                     start_sequence : r.value
                                 })
                                 
                                 const Paths = this.recursive_descend(r.value, log, option, [r.expected_rule_or_group], depth + 1);
                                 
+                                if(CONFIG.VERBOSE) console.log(`    [RECURSE RESULT] Got ${Paths.length} paths from recursion, currentPath.length=${currentPath.length} before merge`);
+
                                 log.push({
                                     isError : false,
                                     message : `Found ${Paths.length} paths for expected rule/group ${r.expected_rule_or_group} for segment [${r.value.join(" ")}], current paths : ${currentPath.length ? JSON.stringify(currentPath, null, 0) : "<empty>"}`,
                                     matches : [],
                                     start_sequence : r.value
                                 })
+
+                                if(Paths.length === 0){
+                                    log.push({
+                                        isError : true,
+                                        message : `Current path has ${currentPath.length} paths but recursion found no paths for expected rule/group ${r.expected_rule_or_group} for segment [${r.value.join(" ")}], this path is invalid`,
+                                        matches : [],
+                                        start_sequence : r.value
+                                    })
+                                    if(CONFIG.VERBOSE) console.log(`    [RECURSE FAILED] No paths found from recursion but current path has ${currentPath.length} paths, breaking path_iter`);
+                                    currentPath = [] //reset current path since this path is invalid
+                                    break path_iter
+                                }
 
                                 if(currentPath.length){
                                     const newMatchElems = [] as typeof currentPath
@@ -704,8 +786,10 @@ export class Parser<
                                         }
                                     }
                                     currentPath = newMatchElems
+                                    if(CONFIG.VERBOSE) console.log(`    [RECURSE MERGE] Merged with existing paths: newLength=${currentPath.length}`);
                                 } else {
                                     currentPath = Paths.map(p => [p])
+                                    if(CONFIG.VERBOSE) console.log(`    [RECURSE INIT] Created initial paths from recursion: ${currentPath.length}`);
                                 }
                                 
                             }
@@ -714,13 +798,24 @@ export class Parser<
                                 log.push({
                                     isError : true,
                                     message : `Expected rule/group ${r.expected_rule_or_group} for segment [${r.value.join(" ")}] is not found in the rule set, cannot recurse`,
-                                    matches : [match],
+                                    matches : [],
                                     start_sequence : r.value
                                 })
-                                throw 0
+                                throw new RecursiveError(`Expected rule/group ${r.expected_rule_or_group} for segment [${r.value.join(" ")}] is not found in the rule set, cannot recurse`)
                             }
 
                         } catch(e){
+                            if(!(e instanceof RecursiveError)){
+                                //unexpected error, rethrow
+                                //safety check for when I forgor to handle a new error type in the recursion
+                                log.push({
+                                    isError : true,
+                                    message : `Unexpected error during recursion for segment [${r.value.join(" ")}] with expected rule/group ${r.expected_rule_or_group}, error: ${(e as any).toString()}`,
+                                    matches : [],
+                                    start_sequence : r.value
+                                })
+                                throw e;
+                            }
                             //ignore, this path is invalid
                             log.push({
                                 isError : true,
@@ -728,12 +823,14 @@ export class Parser<
                                 matches : [],
                                 start_sequence : r.value
                             })
+                            if(CONFIG.VERBOSE) console.log(`    [SEGMENT FAILED] Breaking path_iter. currentPath before reset: length=${currentPath.length}, after reset will be 0`);
                             currentPath = [] //reset current path since this path is invalid
                             break path_iter
                         }
                     }
 
                 }
+                if(CONFIG.VERBOSE) console.log(`[MATCH END] rule="${matchedTopRule}", pushing ${currentPath.length} paths to res. Path element counts: ${currentPath.map(p => p.length).join(", ")}`);
                 res.push(...currentPath.map(path => new RuleMatch(path, matchedTopRule)))
             }
         )

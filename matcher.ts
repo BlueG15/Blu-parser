@@ -232,9 +232,9 @@ function match<RuleNames extends string = never>(
             )
         } else if(CONFIG.VERBOSE){
             if(segmentedPath.length === expected_sequence.length){
-                console.log(`    [PARTIAL MATCH] rejected cause segment not match expected's length: got ${segmentedPath.length}, expected ${expected_sequence.length}`)
+                console.log(`    [PARTIAL MATCH: rejected cause this is not a full match, ends at index ${last_consumed_index}]`)
             }
-            else console.log(`    [PARTIAL MATCH: rejected cause this is not a full match, ends at index ${last_consumed_index}]`)
+            else console.log(`    [PARTIAL MATCH] rejected cause segment not match expected's length: got ${segmentedPath.length}, expected ${expected_sequence.length}`)
         }
 
         return undefined

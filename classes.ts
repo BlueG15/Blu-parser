@@ -3,12 +3,20 @@ export class ClusterMatch {
     constructor(
         public tokens : string[],
     ){}
+
+    stringify() : string {
+        return "C[" + this.tokens.join(",") + "]"
+    }
 }
 
 export class TokenMatch<TName extends string = string>{
     constructor(
         public token : TName
     ){}
+
+    stringify(){
+        return this.token
+    }
 }
 
 export class RuleMatch<RuleNames extends string = string>{
@@ -16,6 +24,10 @@ export class RuleMatch<RuleNames extends string = string>{
         public matched : (RuleMatch<RuleNames> | TokenMatch | ClusterMatch)[],
         public rule_name : RuleNames
     ){}
+
+    stringify() : string {
+        return `${this.rule_name}[${this.matched.map(m => m.stringify()).join(",")}]`
+    }
 }
 
 //in progress classes
