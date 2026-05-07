@@ -60,7 +60,7 @@ let P = new Parser()
             decl.token === "const"
         ))
     }
-
+    
     else return {
         error : "Invalid var decl statement",
         decl, varname, value

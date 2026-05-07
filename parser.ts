@@ -1,6 +1,6 @@
 import { ClusterMatch, Match, PartialMatch, RuleMatch, TokenMatch } from "./classes"
 import { lookup } from "./matcher"
-import { ExcludeWithError, Flatten, ObjectValue } from "./utils"
+import { ExcludeWithError, Flatten, ObjectValue, Writable } from "./utils"
 import * as ERR from "./parser_errors"
 import { CONFIG } from "./config"
 
@@ -73,13 +73,13 @@ type InferPostProcessorInputSingle<
     SymbolName extends string
 > = 
     // rule name
-    SymbolName extends P["T_RL_NAME"] ? (
-        SymbolName extends keyof P["T_PP_DEF"] 
+    SymbolName extends P["__T_RL_NAME"] ? (
+        SymbolName extends keyof P["__T_PP_DEF"] 
         ? (
             //has post processor
-            P["T_PP_DEF"][SymbolName] extends never ?
+            P["__T_PP_DEF"][SymbolName] extends never ?
             RuleMatch :
-            P["T_PP_DEF"][SymbolName]
+            P["__T_PP_DEF"][SymbolName]
         )
         : RuleMatch //no post processor, return default match type
     ) : 
@@ -88,13 +88,13 @@ type InferPostProcessorInputSingle<
     SymbolName extends "T"  ? TokenMatch   : //early terminate
     SymbolName extends "T+" ? ClusterMatch : //early terminate
 
-    SymbolName extends P["T_GR_NAME"] ?
+    SymbolName extends P["__T_GR_NAME"] ?
     ObjectValue<{
-        [K in P["T_GR_DEF"][SymbolName]] : InferPostProcessorInputSingle<P, K>
+        [K in P["__T_GR_DEF"][SymbolName]] : InferPostProcessorInputSingle<P, K>
     }>
     :
     //token
-    SymbolName extends P["T_TK_NAME"] ? TokenMatch :
+    SymbolName extends P["__T_TK_NAME"] ? TokenMatch :
     ERR.PostProcessorInputTypeCannotBeInfered<{symbol_name : SymbolName, symbol_type : "unknown"}>
 
 type InferPostProcessorInput<
@@ -123,20 +123,6 @@ export class Parser<
     RuleNames extends string = keyof RuleDefinitions & string,
     TokenNames extends string = GroupDefinitions["T"]
 >{
-    // type params
-
-    T_RL_DEF : RuleDefinitions = 0 as any
-    T_FR_DEF : FragmentDefinitions = 0 as any
-    T_GR_DEF : GroupDefinitions = 0 as any
-    T_PP_DEF : PostProcessors = 0 as any
-
-    T_RL_NAME  : RuleNames = 0 as any
-    T_FR_NAME  : FragmentNames = 0 as any
-    T_GR_NAME  : GroupNames = 0 as any
-    T_TK_NAME  : TokenNames = 0 as any
-
-    // end type params
-
     #rules     : RuleDefinitions = {} as RuleDefinitions
     #fragments : FragmentDefinitions = {} as FragmentDefinitions
     #groups    : Record<string, string[]> = {}
@@ -191,38 +177,57 @@ export class Parser<
      * */
     rule<
         RuleName extends string, 
-        SequenceType extends string[],
+        SequenceType extends ReadonlyArray<string>,
         IsOfGroup extends GroupNames[] | undefined = undefined,
 
         IsOfGroupInfered extends GroupNames[] = IsOfGroup extends GroupNames[] ? IsOfGroup : [],
         
-        SequenceTypeStrs extends string[] = Flatten<{
-            [K in keyof SequenceType] 
-            : SequenceType[K] extends FragmentNames ? FragmentDefinitions[SequenceType[K]]
-            : SequenceType[K]
-        }>,
+        SequenceTypeStrs extends string[] = 
+            Flatten<
+                Writable<{
+                    [K in keyof SequenceType] 
+                    : SequenceType[K] extends FragmentNames ? FragmentDefinitions[SequenceType[K]]
+                    : SequenceType[K]
+                }>
+            >,
         
         PostProcessorReturn = never,
 
+        NewRuleDefinitions extends Record<string, string[]> =
+        RuleDefinitions & { [K in RuleName] : SequenceTypeStrs },
+
+        NewGroupDefinitions extends Record<string, string> =
+        Omit<
+            GroupDefinitions, 
+            IsOfGroupInfered[number] |
+            "T"
+        > & { 
+            [K in IsOfGroupInfered[number]] : GroupDefinitions[K] | RuleName
+        } & {
+            // add to T
+            "T" : Exclude<
+                GroupDefinitions["T"] | SequenceTypeStrs[number],
+                RuleName | FragmentNames | GroupNames | RuleNames
+            >
+        },
+
+        NewPostProcessors extends Record<string, any> =
+        PostProcessors & { [K in RuleName] : PostProcessorReturn },
+
         NewParserType extends AnyParser = Parser<
-            RuleDefinitions & { [K in RuleName] : SequenceTypeStrs },
-            FragmentDefinitions,
-
-            Omit<
-                GroupDefinitions, 
-                IsOfGroupInfered[number] |
-                "T"
-            > & { 
-                [K in IsOfGroupInfered[number]] : GroupDefinitions[K] | RuleName
-            } & {
-                // add to T
-                "T" : Exclude<
-                    GroupDefinitions["T"] | SequenceTypeStrs[number],
-                    RuleName | FragmentNames | GroupNames | RuleNames
-                >
+            //rules
+            {
+                [K in keyof NewRuleDefinitions] : NewRuleDefinitions[K]
             },
-
-            PostProcessors & { [K in RuleName] : PostProcessorReturn }
+            FragmentDefinitions,
+            //groups
+            {
+                [K in keyof NewGroupDefinitions] : NewGroupDefinitions[K]
+            },
+            //post processors
+            {
+                [K in keyof NewPostProcessors] : NewPostProcessors[K]
+            }
         >,
 
         PostProcessorInput extends any[] = InferPostProcessorInput<NewParserType, SequenceTypeStrs>,
@@ -245,11 +250,10 @@ export class Parser<
                 ERR.AlreadyDefined<{symbol_name : RuleName, symbol_type : "rule", defined_type : "token"}>
             >,
 
-        seq  : Readonly<SequenceType> &
-            ExcludeWithError<
-                Readonly<SequenceType>, never[], 
-                ERR.EmptyDefinition<{symbol_name : RuleName, symbol_type : "rule"}>
-            >,
+        seq  : SequenceType &
+            SequenceTypeStrs extends never[] 
+            ? ERR.EmptyDefinition<{symbol_name : RuleName, symbol_type : "rule"}>
+            : SequenceType,
 
         sameGroupAs : IsOfGroup = undefined as IsOfGroup,
         postProcessor : (...p : PostProcessorInput) => PostProcessorReturn = undefined as any
@@ -288,24 +292,38 @@ export class Parser<
      */
     fragment<
         FragmentName extends string, 
-        SequenceType extends string[],
+        SequenceType extends ReadonlyArray<string>,
         
-        SequenceTypeStrs extends string[] = Flatten<{
-            [K in keyof SequenceType] 
-            : SequenceType[K] extends FragmentNames ? FragmentDefinitions[SequenceType[K]]
-            : SequenceType[K]
-        }>,
+        SequenceTypeStrs extends string[] = 
+            Flatten<
+                Writable<{
+                    [K in keyof SequenceType] 
+                    : SequenceType[K] extends FragmentNames ? FragmentDefinitions[SequenceType[K]]
+                    : SequenceType[K]
+                }>
+            >,
+
+        NewFragmentDefinitions extends Record<string, string[]> = 
+        FragmentDefinitions & { [K in FragmentName] : SequenceTypeStrs },
+
+        NewGroupDefinitions extends Record<string, string> =
+        Omit<GroupDefinitions, "T"> & {
+            // add to T
+            "T" : Exclude<
+                GroupDefinitions["T"] | SequenceTypeStrs[number],
+                FragmentName | FragmentNames | GroupNames | RuleNames
+            >
+        },
 
         NewParserType extends AnyParser = Parser<
             RuleDefinitions,
-            FragmentDefinitions & { [K in FragmentName] : SequenceTypeStrs },
-            (Omit<GroupDefinitions, "T"> & {
-                // add to T
-                "T" : Exclude<
-                    GroupDefinitions["T"] | SequenceTypeStrs[number],
-                    FragmentName | FragmentNames | GroupNames | RuleNames
-                >
-            }),
+            //flatten
+            {
+                [K in keyof NewFragmentDefinitions] : NewFragmentDefinitions[K]
+            },
+            {
+                [K in keyof NewGroupDefinitions] : NewGroupDefinitions[K]
+            },
             PostProcessors
         >
     >(
@@ -327,15 +345,15 @@ export class Parser<
                 ERR.AlreadyDefined<{symbol_name : FragmentName, symbol_type : "fragment", defined_type : "token"}>
             >,
 
-        seq  : Readonly<SequenceType> &
-            ExcludeWithError<
-                Readonly<SequenceType>, never[], 
-                ERR.EmptyDefinition<{symbol_name : FragmentName, symbol_type : "rule"}>
-            > & (
-                FragmentName extends SequenceTypeStrs[number] 
-                ? ERR.CannotBeSelfReferential<{symbol_name : FragmentName, symbol_type : "fragment"}> 
-                : Readonly<SequenceType>
-            )
+        seq  :  SequenceType &
+                ExcludeWithError<
+                    SequenceType, never[], 
+                    ERR.EmptyDefinition<{symbol_name : FragmentName, symbol_type : "rule"}>
+                > & (
+                    FragmentName extends SequenceTypeStrs[number] 
+                    ? ERR.CannotBeSelfReferential<{symbol_name : FragmentName, symbol_type : "fragment"}> 
+                    : SequenceType
+                ),
     ){
         (this.#fragments as any)[name] = (seq as SequenceType).flatMap(s => {
             if(s in this.#fragments) return this.#fragments[s];
@@ -356,18 +374,24 @@ export class Parser<
      */
     group<
         GroupName extends string,
-        GroupContent extends string[] = [],
+        GroupContent extends ReadonlyArray<string> = [],
 
-        NewParserType extends AnyParser = Parser<
-            RuleDefinitions,
-            FragmentDefinitions,
-            Omit<GroupDefinitions, "T"> 
+        NewGroupDefinitions extends Record<string, string> = 
+        Omit<GroupDefinitions, "T"> 
             & { [K in GroupName] : GroupContent[number] } 
             & { 
                 "T" : Exclude<
                     GroupDefinitions["T"] | GroupContent[number], 
                     GroupName | FragmentNames | GroupNames | RuleNames
                 >
+            },
+
+        NewParserType extends AnyParser = Parser<
+            RuleDefinitions,
+            FragmentDefinitions,
+            {
+                //flatten
+                [K in keyof NewGroupDefinitions] : NewGroupDefinitions[K]
             },
             PostProcessors
         >
@@ -390,7 +414,7 @@ export class Parser<
                 ERR.AlreadyDefined<{symbol_name : GroupName, symbol_type : "group", defined_type : "token"}>
             >,
 
-        contents? : Readonly<GroupContent> & {
+        contents? : {
             [K in keyof GroupContent] 
                 : GroupContent[K] extends GroupName 
                 ? ERR.CannotBeSelfReferential<{symbol_name : GroupName, symbol_type : "group"}> 
@@ -875,4 +899,27 @@ export class Parser<
 
         return cul
     }
+
+
+    // type params
+
+    /** DO NOT READ THIS VARIABLE, this is only used for type storage */
+    readonly __T_RL_DEF : RuleDefinitions = 0 as any
+    /** DO NOT READ THIS VARIABLE, this is only used for type storage */
+    readonly __T_FR_DEF : FragmentDefinitions = 0 as any
+    /** DO NOT READ THIS VARIABLE, this is only used for type storage */
+    readonly __T_GR_DEF : GroupDefinitions = 0 as any
+    /** DO NOT READ THIS VARIABLE, this is only used for type storage */
+    readonly __T_PP_DEF : PostProcessors = 0 as any
+
+    /** DO NOT READ THIS VARIABLE, this is only used for type storage */
+    readonly __T_RL_NAME  : RuleNames = 0 as any
+    /** DO NOT READ THIS VARIABLE, this is only used for type storage */
+    readonly __T_FR_NAME  : FragmentNames = 0 as any
+    /** DO NOT READ THIS VARIABLE, this is only used for type storage */
+    readonly __T_GR_NAME  : GroupNames = 0 as any
+    /** DO NOT READ THIS VARIABLE, this is only used for type storage */
+    readonly __T_TK_NAME  : TokenNames = 0 as any
+
+    // end type params
 }

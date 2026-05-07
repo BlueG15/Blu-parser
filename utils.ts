@@ -9,3 +9,6 @@ export type ObjectValue<T extends Record<any, any>> = T[keyof T]
 
 
 export type ExcludeWithError<T, O, Error extends string> = T extends O ? {err : Error} & T : T
+export type Writable<T> = {
+  -readonly [P in keyof T]: T[P];
+};

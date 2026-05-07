@@ -113,5 +113,6 @@
     "./dev",
     "./build",
     "./web",
+    "__test_use.ts",
   ],
 }
