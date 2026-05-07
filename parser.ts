@@ -245,9 +245,9 @@ export class Parser<
                 ERR.AlreadyDefined<{symbol_name : RuleName, symbol_type : "rule", defined_type : "token"}>
             >,
 
-        seq  : SequenceType &
+        seq  : Readonly<SequenceType> &
             ExcludeWithError<
-                SequenceType, never[], 
+                Readonly<SequenceType>, never[], 
                 ERR.EmptyDefinition<{symbol_name : RuleName, symbol_type : "rule"}>
             >,
 
@@ -327,14 +327,14 @@ export class Parser<
                 ERR.AlreadyDefined<{symbol_name : FragmentName, symbol_type : "fragment", defined_type : "token"}>
             >,
 
-        seq  : SequenceType &
+        seq  : Readonly<SequenceType> &
             ExcludeWithError<
-                SequenceType, never[], 
+                Readonly<SequenceType>, never[], 
                 ERR.EmptyDefinition<{symbol_name : FragmentName, symbol_type : "rule"}>
             > & (
                 FragmentName extends SequenceTypeStrs[number] 
                 ? ERR.CannotBeSelfReferential<{symbol_name : FragmentName, symbol_type : "fragment"}> 
-                : SequenceType
+                : Readonly<SequenceType>
             )
     ){
         (this.#fragments as any)[name] = (seq as SequenceType).flatMap(s => {
@@ -390,7 +390,7 @@ export class Parser<
                 ERR.AlreadyDefined<{symbol_name : GroupName, symbol_type : "group", defined_type : "token"}>
             >,
 
-        contents? : {
+        contents? : Readonly<GroupContent> & {
             [K in keyof GroupContent] 
                 : GroupContent[K] extends GroupName 
                 ? ERR.CannotBeSelfReferential<{symbol_name : GroupName, symbol_type : "group"}> 

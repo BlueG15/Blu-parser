@@ -9,6 +9,10 @@ class VarDecl {
     ){}
 }
 
+const K = {
+    "1" : ["one", "a", "an"],
+} as const
+
 let P = new Parser()
 .group("num")
 
@@ -16,7 +20,7 @@ let P = new Parser()
 
 .rule("var_decl_stmt", ["decls", "T+", "=", "num"] as const)
 
-.rule("1", ["one"] as const,    ["num"] as const, () => 1)
+.rule("1", K[1],                ["num"] as const, () => 1)
 .rule("2", ["two"] as const,    ["num"] as const, () => 2)
 .rule("3", ["three"] as const,  ["num"] as const, () => 3)
 .rule("4", ["four"] as const,   ["num"] as const, () => 4)
